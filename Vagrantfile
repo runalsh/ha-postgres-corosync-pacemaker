@@ -2,7 +2,7 @@
 # vi: set ft=ruby :
 
 Vagrant.configure(2) do |config|
-  config.vm.box = "ubuntu/nooble"
+  config.vm.box = "ubuntu/noble"
   config.vm.provider "virtualbox" do |v|
     v.customize ["modifyvm", :id, "--memory", 512]
   end
