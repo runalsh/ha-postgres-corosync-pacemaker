@@ -1,6 +1,6 @@
 #!/bin/sh
 
-FROM https://github.com/ClusterLabs/resource-agents/blob/main/heartbeat/pgsql
+#FROM https://github.com/ClusterLabs/resource-agents/blob/main/heartbeat/pgsql
 
 #
 # Description:  Manages a PostgreSQL Server as an OCF High-Availability

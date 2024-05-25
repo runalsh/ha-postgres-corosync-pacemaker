@@ -6,69 +6,23 @@ PG03="192.168.5.13"
 
 POSTGRESQL_VERSION=16
 
-function setup_ssh_keys() {
+
+if [ ! -f /root/.ssh/id_rsa ]; then
     cp -rp /vagrant/.ssh/* /root/.ssh
     cp -rp /root/.ssh/id_rsa.pub /root/.ssh/authorized_keys
-}
+    echo 'ubuntu:ubuntu' | chpasswd
+    echo 'root:root' | chpasswd
+fi
 
-function setup_pgbouncer() {
-    apt-get -y install pgbouncer=
-
-    cat > /etc/pgbouncer/pgbouncer.ini <<EOF
-[databases]
-postgres = host=192.168.5.10 pool_size=6
-template1 = host=192.168.5.10 pool_size=6
-
-[pgbouncer]
-logfile = /var/log/postgresql/pgbouncer.log
-pidfile = /var/run/postgresql/pgbouncer.pid
-listen_addr = *
-listen_port = 6432
-unix_socket_dir = /var/run/postgresql
-auth_type = trust
-auth_file = /etc/pgbouncer/userlist.txt
-admin_users = postgres
-stats_users =
-pool_mode = transaction
-server_reset_query =
-server_check_query = select 1
-server_check_delay = 10
-max_client_conn = 1000
-default_pool_size = 12
-reserve_pool_size = 5
-log_connections = 1
-log_disconnections = 1
-log_pooler_errors = 1
-EOF
-
-    cat > /etc/pgbouncer/userlist.txt <<EOF
-"postgres" "whatever_we_trust"
-EOF
-
-    cat > /etc/default/pgbouncer <<EOF
-START=1
-EOF
-    service pgbouncer start
-}
-
-function setup_fresh_postgresql() {
-    su -s /bin/bash -c "/usr/lib/postgresql/${POSTGRESQL_VERSION}/bin/initdb -D /var/lib/postgresql/${POSTGRESQL_VERSION}/main -E utf-8" postgres
-    service postgresql start
-    service postgresql stop
-    rsync -avz -e 'ssh -oStrictHostKeyChecking=no' /var/lib/postgresql/${POSTGRESQL_VERSION}/main/ $PG02:/var/lib/postgresql/${POSTGRESQL_VERSION}/main
-    rsync -avz -e 'ssh -oStrictHostKeyChecking=no' /var/lib/postgresql/${POSTGRESQL_VERSION}/main/ $PG03:/var/lib/postgresql/${POSTGRESQL_VERSION}/main
-}
-
-function setup_postgresql_repo() {
+if [ ! -f /etc/apt/sources.list.d/pgdg.list ]; then
     echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list
     apt-get -y install wget ca-certificates ntp
     wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
     apt-get update
     apt-get -y upgrade
-}
+fi
 
-function setup_postgresql() {
-
+if [ ! -f /etc/postgresql/${POSTGRESQL_VERSION}/main/postgresql.conf ]; then
     apt-get -y install postgresql-${POSTGRESQL_VERSION}
     update-rc.d -f postgresql remove
     service postgresql stop
@@ -138,9 +92,49 @@ work_mem = '128MB'
 EOF
 
     rm -rf /var/lib/postgresql/${POSTGRESQL_VERSION}/main/
-}
+fi
 
-function setup_cluster() {
+if [ ! -f /etc/pgbouncer/pgbouncer.ini ]; then
+    apt-get -y install pgbouncer=
+
+    cat > /etc/pgbouncer/pgbouncer.ini <<EOF
+[databases]
+postgres = host=192.168.5.10 pool_size=6
+template1 = host=192.168.5.10 pool_size=6
+
+[pgbouncer]
+logfile = /var/log/postgresql/pgbouncer.log
+pidfile = /var/run/postgresql/pgbouncer.pid
+listen_addr = *
+listen_port = 6432
+unix_socket_dir = /var/run/postgresql
+auth_type = trust
+auth_file = /etc/pgbouncer/userlist.txt
+admin_users = postgres
+stats_users =
+pool_mode = transaction
+server_reset_query =
+server_check_query = select 1
+server_check_delay = 10
+max_client_conn = 1000
+default_pool_size = 12
+reserve_pool_size = 5
+log_connections = 1
+log_disconnections = 1
+log_pooler_errors = 1
+EOF
+
+    cat > /etc/pgbouncer/userlist.txt <<EOF
+"postgres" "whatever_we_trust"
+EOF
+
+    cat > /etc/default/pgbouncer <<EOF
+START=1
+EOF
+    service pgbouncer start
+fi
+
+if [ ! -f /etc/corosync/corosync.conf ]; then
     apt-get -y install corosync pacemaker
     cp /vagrant/corosync/corosync.conf /etc/corosync/corosync.conf
     cp /vagrant/corosync/authkey /etc/corosync/authkey
@@ -157,9 +151,9 @@ EOF
 
     service corosync start
     service pacemaker start
-}
+fi
 
-function build_cluster() {
+if [ "$(hostname)" == "pg01" ]; then
     printf "Waiting for cluster to have quorum"
     while [ -z "$(crm status | grep '3 Nodes configured')" ]; do
         sleep 1
@@ -167,7 +161,11 @@ function build_cluster() {
     done
     echo " done"
 
-    setup_fresh_postgresql
+    su -s /bin/bash -c "/usr/lib/postgresql/${POSTGRESQL_VERSION}/bin/initdb -D /var/lib/postgresql/${POSTGRESQL_VERSION}/main -E utf-8" postgres
+    service postgresql start
+    service postgresql stop
+    rsync -avz -e 'ssh -oStrictHostKeyChecking=no' /var/lib/postgresql/${POSTGRESQL_VERSION}/main/ $PG02:/var/lib/postgresql/${POSTGRESQL_VERSION}/main
+    rsync -avz -e 'ssh -oStrictHostKeyChecking=no' /var/lib/postgresql/${POSTGRESQL_VERSION}/main/ $PG03:/var/lib/postgresql/${POSTGRESQL_VERSION}/main
 
     cat <<EOF | crm configure
 property stonith-enabled=false
@@ -191,30 +189,4 @@ order stop-vip-after-postgres 0: msPostgresql:demote PostgresqlVIP:stop symmetri
 commit
 end
 EOF
-}
-
-if [ ! -f /root/.ssh/id_rsa ]; then
-    setup_ssh_keys
-    echo 'ubuntu:ubuntu' | chpasswd
-    echo 'root:root' | chpasswd
-fi
-
-if [ ! -f /etc/apt/sources.list.d/pgdg.list ]; then
-    setup_postgresql_repo
-fi
-
-if [ ! -f /etc/postgresql/${POSTGRESQL_VERSION}/main/postgresql.conf ]; then
-    setup_postgresql
-fi
-
-if [ ! -f /etc/pgbouncer/pgbouncer.ini ]; then
-    setup_pgbouncer
-fi
-
-if [ ! -f /etc/corosync/corosync.conf ]; then
-    setup_cluster
-fi
-
-if [ "$(hostname)" == "pg01" ]; then
-    build_cluster
 fi
